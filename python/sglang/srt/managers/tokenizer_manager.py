@@ -269,6 +269,9 @@ class TokenizerManager:
             None
         )
 
+        # Lock to linearize LoRA update operations.
+        self.lora_update_lock = asyncio.Lock()
+
         # For pd disaggregtion
         self.disaggregation_mode = DisaggregationMode(
             self.server_args.disaggregation_mode
@@ -1053,7 +1056,7 @@ class TokenizerManager:
             obj.lora_path,
         )
 
-        async with self.model_update_lock.writer_lock:
+        async with self.lora_update_lock:
             result = (await self.update_lora_adapter_communicator(obj))[0]
             self.loaded_lora_adapters = result.loaded_adapters
             return result
@@ -1079,7 +1082,7 @@ class TokenizerManager:
             obj.lora_name,
         )
 
-        async with self.model_update_lock.writer_lock:
+        async with self.lora_update_lock:
             result = (await self.update_lora_adapter_communicator(obj))[0]
             self.loaded_lora_adapters = result.loaded_adapters
             return result

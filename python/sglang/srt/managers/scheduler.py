@@ -2466,12 +2466,6 @@ class Scheduler(
         """In-place loading a new lora adapter from disk or huggingface."""
 
         result = self.tp_worker.load_lora_adapter(recv_req)
-
-        if result.success:
-            flush_cache_success = self.flush_cache()
-            assert flush_cache_success, "Cache flush failed after loading lora adapter."
-        else:
-            logger.error(result.error_message)
         return result
 
     def unload_lora_adapter(
@@ -2480,14 +2474,6 @@ class Scheduler(
         """Unload the lora adapter."""
 
         result = self.tp_worker.unload_lora_adapter(recv_req)
-
-        if result.success:
-            flush_cache_success = self.flush_cache()
-            assert (
-                flush_cache_success
-            ), "Cache flush failed after unloading LoRA weights"
-        else:
-            logger.error(result.error_message)
         return result
 
     def init_weights_update_group(self, recv_req: InitWeightsUpdateGroupReqInput):

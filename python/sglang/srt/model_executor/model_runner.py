@@ -890,14 +890,8 @@ class ModelRunner:
             tp_rank=self.tp_rank,
             max_lora_rank=self.server_args.max_lora_rank,
             target_modules=self.server_args.lora_target_modules,
+            lora_paths=self.server_args.lora_paths,
         )
-        result = self.lora_manager.load_lora_adapters(self.server_args.lora_paths or {})
-        if result.success:
-            logger.info(
-                f"LoRA manager ready. Loaded LoRA adapters: {', '.join(result.loaded_adapters)}"
-            )
-        else:
-            raise RuntimeError(f"Failed to load LoRA adapters: {result.error_message}")
 
     def load_lora_adapter(self, lora_name: str, lora_path: str):
         """Load a new lora adapter from disk or huggingface."""
