@@ -1845,7 +1845,7 @@ class ServerArgs:
                         self.lora_paths[name] = LoRAInfo(lora_name=name, lora_path=path)
                     else:
                         self.lora_paths[lora_path] = LoRAInfo(
-                            lora_name=path, lora_path=path
+                            lora_name=lora_path, lora_path=lora_path
                         )
             elif isinstance(self.lora_paths, dict):
                 self.lora_paths = {

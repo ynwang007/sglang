@@ -737,7 +737,7 @@ class TokenizerManager:
 
                 # Mark ongoing LoRA requests as finished.
                 if self.server_args.enable_lora and obj.lora_path:
-                    self.lora_registry.release(obj.lora_path)
+                    await self.lora_registry.release(obj.lora_path)
 
                 # Check if this was an abort/error created by scheduler
                 if isinstance(out["meta_info"].get("finish_reason"), dict):
