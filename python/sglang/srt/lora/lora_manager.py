@@ -26,6 +26,7 @@ from sglang.srt.lora.backend.base_backend import BaseLoRABackend, get_backend_fr
 from sglang.srt.lora.layers import BaseLayerWithLoRA, get_lora_layer
 from sglang.srt.lora.lora import LoRAAdapter
 from sglang.srt.lora.lora_config import LoRAConfig
+from sglang.srt.lora.lora_registry import LoRAInfo
 from sglang.srt.lora.mem_pool import LoRAMemoryPool
 from sglang.srt.lora.utils import (
     LoRABatchInfo,
@@ -55,7 +56,7 @@ class LoRAManager:
         tp_rank: int = 0,
         max_lora_rank: Optional[int] = None,
         target_modules: Optional[Iterable[str]] = None,
-        lora_paths: Optional[Dict[str, str]] = None,
+        lora_paths: Optional[Dict[str, LoRAInfo]] = None,
     ):
         self.base_model: torch.nn.Module = base_model
         self.base_hf_config: AutoConfig = base_hf_config
@@ -113,44 +114,40 @@ class LoRAManager:
             success=success,
             error_message=error_message,
             loaded_adapters={
-                name: config.path for name, config in self.configs.items()
+                config.name: config.path for config in self.configs.values()
             },
         )
 
-    def load_lora_adapter(self, lora_name: str, lora_path: str) -> LoRAUpdateResult:
+    def load_lora_adapter(
+        self, lora_name: str, lora_path: str, lora_id: str
+    ) -> LoRAUpdateResult:
         """
         Load a single LoRA adapter from the specified path.
 
         Args:
             lora_name (str): The name of the LoRA adapter.
             lora_path (str): The file path to the LoRA adapter.
+            lora_id (str): A unique identifier for the LoRA adapter.
         """
 
-        success = True
-        error_message = ""
-
-        if lora_name in self.loras:
-            success = False
-            error_message = f"LoRA adapter {lora_name} is skipped as it is already loaded. If you want to reload it, please unload it first."
+        assert (
+            lora_id not in self.loras
+        ), f"LoRA adapter with ID {lora_id} is already loaded. This should have been verified before request is sent to the backend."
 
         try:
-            new_adapter = LoRAConfig(lora_path)
-            self.validate_new_adapter(lora_name, new_adapter)
-            self.configs[lora_name] = new_adapter
+            new_adapter = LoRAConfig(name=lora_name, path=lora_path)
+            self.validate_new_adapter(new_adapter)
+            self.configs[lora_id] = new_adapter
+            self.update_lora_adapters()
         except Exception as e:
-            success = False
-            error_message = (
-                f"Failed to load LoRA adapter {lora_name} from {lora_path}: {str(e)}"
+            self.create_lora_update_result(
+                success=False,
+                error_message=str(e),
             )
 
-        self.update_lora_adapters()
+        return self.create_lora_update_result(success=True)
 
-        return self.create_lora_update_result(
-            success=success,
-            error_message=error_message,
-        )
-
-    def validate_new_adapter(self, lora_name: str, lora_config: LoRAConfig):
+    def validate_new_adapter(self, lora_config: LoRAConfig):
         """
         Validate if an adapter can be loaded into the current LoRA memory pool and generate error if it is incompatible.
         """
@@ -159,34 +156,40 @@ class LoRAManager:
         incompatible = memory_pool and not memory_pool.can_support(lora_config)
         if incompatible:
             raise ValueError(
-                f"LoRA adapter {lora_name} with rank {lora_config.r} is incompatible with the current LoRA memory pool configuration. "
+                f"LoRA adapter {lora_config.name} with rank {lora_config.r} is incompatible with the current LoRA memory pool configuration. "
                 "Please ensure that the LoRA adapter's rank is within the configured `--max_lora_rank` and that the target modules are "
                 "included in `--enable_lora_modules`."
             )
 
-    def unload_lora_adapter(self, lora_name: str) -> LoRAUpdateResult:
+    def unload_lora_adapter(self, lora_name: str, lora_id: str) -> LoRAUpdateResult:
         """
         Unload LoRA adapters by their names. This will remove the adapters from the memory pool and
         delete the corresponding LoRA modules.
         """
 
-        success = True
-        error_message = ""
-        if lora_name in self.loras:
-            del self.configs[lora_name]
-        else:
-            error_message = f"LoRA adapter {lora_name} is not loaded."
-            success = False
+        adapter = self.configs.get(lora_id, None)
+        assert (
+            adapter is not None
+        ), "LoRA adapter with ID {lora_id} is not loaded. This should have been verified before request is sent to the backend."
+        assert (
+            adapter.name == lora_name
+        ), f"mismatch between requested LoRA name {lora_name} and the loaded adapter name {adapter.name}."
 
-        self.update_lora_adapters()
+        try:
+            del self.configs[lora_id]
+            self.update_lora_adapters()
+        except Exception as e:
+            self.create_lora_update_result(
+                success=False,
+                error_message=str(e),
+            )
 
-        return self.create_lora_update_result(
-            success=success,
-            error_message=error_message,
-        )
+        return self.create_lora_update_result(success=True)
 
     def prepare_lora_batch(self, forward_batch: ForwardBatch):
-        # load active loras into lora memory pool
+        # Load active loras into lora memory pool
+        # despite the confusing naming, `forward_batch.lora_paths` is actually a set of unique LoRA IDs, not LoRA paths.
+        # We must use unique IDs here (instead of LoRA names) as names can be reused across dynamic loading/unloading.
         cur_uids = set(forward_batch.lora_paths)
         assert len(cur_uids) <= self.max_loras_per_batch
         self.memory_pool.prepare_lora_batch(cur_uids, self.loras, self.lora_modules)
@@ -206,10 +209,10 @@ class LoRAManager:
             weight_indices = [0] * len(forward_batch.lora_paths)
             lora_ranks = [0] * self.max_loras_per_batch
             scalings = [0] * self.max_loras_per_batch
-            for i, lora_path in enumerate(forward_batch.lora_paths):
-                weight_indices[i] = self.memory_pool.get_buffer_id(lora_path)
-                if lora_path is not None:
-                    lora = self.loras[lora_path]
+            for i, uid in enumerate(forward_batch.lora_paths):
+                weight_indices[i] = self.memory_pool.get_buffer_id(uid)
+                if uid is not None:
+                    lora = self.loras[uid]
                     lora_ranks[weight_indices[i]] = lora.config.r
                     scalings[weight_indices[i]] = lora.scaling
 
@@ -330,7 +333,7 @@ class LoRAManager:
         self,
         max_lora_rank: Optional[int] = None,
         target_modules: Optional[Iterable[str]] = None,
-        lora_paths: Optional[Dict[str, str]] = None,
+        lora_paths: Optional[Dict[str, LoRAInfo]] = None,
     ):
         """
         Initialize the internal (mutable) state of the LoRAManager.
@@ -343,18 +346,22 @@ class LoRAManager:
             max_lora_rank is not None and target_modules is not None
         ), "When no initial --lora-paths is provided, you need to specify both --max-lora-rank and --lora-target-modules for LoRA initialization."
 
-        # Configs of all active LoRA adapters.
+        # Configs of all active LoRA adapters, indexed by LoRA ID.
         self.configs: Dict[str, LoRAConfig] = {}
 
-        # LoRA adapter weights cached in CPU memory.
+        # LoRA adapter weights cached in CPU memory, indexed by LoRA ID.
         self.loras: Dict[str, LoRAAdapter] = {}
 
         if lora_paths:
-            for lora_name, lora_path in lora_paths.items():
-                result = self.load_lora_adapter(lora_name, lora_path)
+            for lora_info in lora_paths.values():
+                result = self.load_lora_adapter(
+                    lora_name=lora_info.lora_name,
+                    lora_path=lora_info.lora_path,
+                    lora_id=lora_info.lora_id,
+                )
                 if not result.success:
                     raise RuntimeError(
-                        f"Failed to load LoRA adapter {lora_name} from {lora_path}: {result.error_message}"
+                        f"Failed to load LoRA adapter {lora_info.lora_name}: {result.error_message}"
                     )
 
         # Confirm buffer shapes and initialize the LoRA memory pool accordingly.
@@ -405,24 +412,25 @@ class LoRAManager:
         """
 
         # Load new adapter weights to cpu
-        for name, config in self.configs.items():
-            if name not in self.loras:
-                logger.info(f"Loading weight of LoRA adapter {name} from {config.path}")
+        for uid, config in self.configs.items():
+            if uid not in self.loras:
+                logger.info(
+                    f"Loading weight of LoRA adapter {config.name} from {config.path}. (uid: {uid})"
+                )
                 lora_adapter = LoRAAdapter(
-                    name,
+                    uid,
                     config,
                     self.base_hf_config,
                     self.load_config,
                     self.lora_backend,
                 )
                 lora_adapter.initialize_weights()
-                self.loras[name] = lora_adapter
+                self.loras[uid] = lora_adapter
 
         # Clean up unused LoRA adapters, copying the list to avoid modifying the dict during iteration.
-        for name in list(self.loras):
-            if name not in self.configs:
-                logger.info(f"Unloading LoRA adapter {name}")
-                del self.loras[name]
+        for uid in list(self.loras):
+            if uid not in self.configs:
+                del self.loras[uid]
 
         # Additional checks for flashinfer backend
         # FIXME remove the restrictions after supporting multi-rank for flashinfer backend

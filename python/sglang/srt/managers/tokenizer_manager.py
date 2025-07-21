@@ -62,6 +62,7 @@ from sglang.srt.hf_transformers_utils import (
     get_tokenizer,
     get_tokenizer_from_processor,
 )
+from sglang.srt.lora.lora_registry import LoRAInfo, LoRARegistry
 from sglang.srt.managers.io_struct import (
     AbortReq,
     BatchEmbeddingOut,
@@ -244,9 +245,7 @@ class TokenizerManager:
 
         # Initialize loaded loRA adapters with the initial lora paths in the server_args.
         # This list will be updated when new LoRA adapters are loaded or unloaded dynamically.
-        self.loaded_lora_adapters: Dict[str, str] = dict(
-            self.server_args.lora_paths or {}
-        )
+        self.lora_registry = LoRARegistry(self.server_args.lora_paths or {})
 
         # Store states
         self.no_create_loop = False
@@ -526,12 +525,12 @@ class TokenizerManager:
         else:
             mm_inputs = None
 
-        self._validate_one_request(obj, input_ids)
+        await self._validate_one_request(obj, input_ids)
         return self._create_tokenized_object(
             obj, input_text, input_ids, input_embeds, mm_inputs, token_type_ids
         )
 
-    def _validate_one_request(
+    async def _validate_one_request(
         self, obj: Union[GenerateReqInput, EmbeddingReqInput], input_ids: List[int]
     ) -> None:
         """Validates that the input token count and the requested token count doesn't exceed the model's context length."""
@@ -578,7 +577,8 @@ class TokenizerManager:
                     "Please set `--enable-custom-logits-processor` to enable this feature."
                 )
             if self.server_args.enable_lora and obj.lora_path:
-                self._validate_lora_adapters(obj)
+                # Replace LoRA names in `lora_path` with their corresponding LoRA IDs.
+                obj.lora_path = await self.lora_registry.acquire(obj.lora_path)
 
     def _validate_input_ids_in_vocab(
         self, input_ids: List[int], vocab_size: int
@@ -692,21 +692,6 @@ class TokenizerManager:
                     "Batch tokenization is not needed for input_embeds. Do not set `enable_tokenizer_batch_encode`."
                 )
 
-    def _validate_lora_adapters(self, obj: GenerateReqInput):
-        """Validate that the requested LoRA adapters are loaded."""
-        requested_adapters = (
-            set(obj.lora_path) if isinstance(obj.lora_path, list) else {obj.lora_path}
-        )
-        loaded_adapters = (
-            self.loaded_lora_adapters.keys() if self.loaded_lora_adapters else set()
-        )
-        unloaded_adapters = requested_adapters - loaded_adapters
-        if unloaded_adapters:
-            raise ValueError(
-                f"The following requested LoRA adapters are not loaded: {unloaded_adapters}\n"
-                f"Loaded adapters: {loaded_adapters}."
-            )
-
     def _send_one_request(
         self,
         obj: Union[GenerateReqInput, EmbeddingReqInput],
@@ -749,6 +734,10 @@ class TokenizerManager:
                     else:
                         msg = f"Finish: obj={dataclass_to_string_truncated(obj, max_length, skip_names=skip_names)}, out={dataclass_to_string_truncated(out, max_length, skip_names=out_skip_names)}"
                     logger.info(msg)
+
+                # Mark ongoing LoRA requests as finished.
+                if self.server_args.enable_lora and obj.lora_path:
+                    self.lora_registry.release(obj.lora_path)
 
                 # Check if this was an abort/error created by scheduler
                 if isinstance(out["meta_info"].get("finish_reason"), dict):
@@ -1057,8 +1046,17 @@ class TokenizerManager:
         )
 
         async with self.lora_update_lock:
+            # Generate new uniquely identifiable LoRAInfo object.
+            new_adapter = LoRAInfo(obj.lora_name, obj.lora_path)
+            obj.lora_id = new_adapter.lora_id
+
+            # Trigger the actual loading operation at the backend processes.
             result = (await self.update_lora_adapter_communicator(obj))[0]
-            self.loaded_lora_adapters = result.loaded_adapters
+
+            # Register the LoRA adapter only after loading is successful.
+            if result.success:
+                await self.lora_registry.register(new_adapter)
+
             return result
 
     async def unload_lora_adapter(
@@ -1083,8 +1081,16 @@ class TokenizerManager:
         )
 
         async with self.lora_update_lock:
+            # Unregister the LoRA adapter from the registry to stop new requests for this adapter
+            # from being started.
+            lora_id = await self.lora_registry.unregister(obj.lora_name)
+            obj.lora_id = lora_id
+
+            # Initiate the actual unloading operation at the backend processes only after all
+            # ongoing requests using this LoRA adapter are finished.
+            await self.lora_registry.wait_for_unload(lora_id)
             result = (await self.update_lora_adapter_communicator(obj))[0]
-            self.loaded_lora_adapters = result.loaded_adapters
+
             return result
 
     async def get_weights_by_name(
@@ -1312,7 +1318,7 @@ class TokenizerManager:
         filename = os.path.join(
             self.crash_dump_folder,
             os.getenv("HOSTNAME", None),
-            f'crash_dump_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}.pkl',
+            f"crash_dump_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.pkl",
         )
 
         os.makedirs(os.path.dirname(filename), exist_ok=True)

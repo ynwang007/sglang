@@ -21,8 +21,10 @@ from huggingface_hub import snapshot_download
 class LoRAConfig:
     def __init__(
         self,
+        name: str,
         path: str,
     ) -> None:
+        self.name = name
         self.path = path
         self.hf_config = self.get_lora_config()
         self.target_modules = self.hf_config["target_modules"]
