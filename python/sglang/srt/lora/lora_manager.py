@@ -140,7 +140,7 @@ class LoRAManager:
             self.configs[lora_id] = new_adapter
             self.update_lora_adapters()
         except Exception as e:
-            self.create_lora_update_result(
+            return self.create_lora_update_result(
                 success=False,
                 error_message=str(e),
             )
@@ -179,7 +179,7 @@ class LoRAManager:
             del self.configs[lora_id]
             self.update_lora_adapters()
         except Exception as e:
-            self.create_lora_update_result(
+            return self.create_lora_update_result(
                 success=False,
                 error_message=str(e),
             )

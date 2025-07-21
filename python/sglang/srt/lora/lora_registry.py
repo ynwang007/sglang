@@ -79,7 +79,7 @@ class LoRARegistry:
         async with self._registry_lock.writer_lock:
             if lora_info.lora_name in self._registry:
                 raise ValueError(
-                    f"LoRA with name {lora_info.lora_name} already exists. Loaded LoRAs: {self.registry.keys()}"
+                    f"LoRA with name {lora_info.lora_name} already exists. Loaded LoRAs: {self._registry.keys()}"
                 )
             self._registry[lora_info.lora_name] = lora_info
 
@@ -114,7 +114,7 @@ class LoRARegistry:
                         f"The following requested LoRA adapters are not loaded: {lora_name}\n"
                         f"Loaded adapters: {self._registry.keys()}."
                     )
-                self._counters[lora_info.lora_id].increment()
+                await self._counters[lora_info.lora_id].increment()
                 return lora_info.lora_id
             elif isinstance(lora_name, list):
                 result = []
@@ -125,7 +125,7 @@ class LoRARegistry:
                             f"The following requested LoRA adapters are not loaded: {name}\n"
                             f"Loaded adapters: {self._registry.keys()}."
                         )
-                    self._counters[lora_info.lora_id].increment()
+                    await self._counters[lora_info.lora_id].increment()
                     result.append(lora_info.lora_id)
                 return result
             else:
@@ -133,17 +133,17 @@ class LoRARegistry:
                     "lora_name must be either a string or a list of strings."
                 )
 
-    async def release(self, lora_id: Union[str, List[str]]) -> Union[str, List[str]]:
+    async def release(self, lora_id: Union[str, List[str]]):
         """
         Decrements the usage counter for a LoRA adapter, indicating that it is no longer in use.
         """
 
         async with self._registry_lock.reader_lock:
             if isinstance(lora_id, str):
-                self._counters[lora_id].decrement()
+                await self._counters[lora_id].decrement()
             elif isinstance(lora_id, list):
                 for id in lora_id:
-                    self._counters[id].decrement()
+                    await self._counters[id].decrement()
             else:
                 raise TypeError("lora_id must be either a string or a list of strings.")
 
