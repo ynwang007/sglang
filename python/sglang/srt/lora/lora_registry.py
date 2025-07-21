@@ -106,28 +106,25 @@ class LoRARegistry:
         by incrementing its counter.
         """
 
+        async def _acquire_single(name: str) -> str:
+            lora_info = self._registry.get(name, None)
+            if lora_info is None:
+                raise ValueError(
+                    f"The following requested LoRA adapters are not loaded: {name}\n"
+                    f"Loaded adapters: {self._registry.keys()}."
+                )
+            await self._counters[lora_info.lora_id].increment()
+            return lora_info.lora_id
+
         async with self._registry_lock.reader_lock:
             if isinstance(lora_name, str):
-                lora_info = self._registry.get(lora_name, None)
-                if lora_info is None:
-                    raise ValueError(
-                        f"The following requested LoRA adapters are not loaded: {lora_name}\n"
-                        f"Loaded adapters: {self._registry.keys()}."
-                    )
-                await self._counters[lora_info.lora_id].increment()
-                return lora_info.lora_id
+                lora_id = await _acquire_single(lora_name)
+                return lora_id
             elif isinstance(lora_name, list):
-                result = []
-                for name in lora_name:
-                    lora_info = self._registry.get(name, None)
-                    if lora_info is None:
-                        raise ValueError(
-                            f"The following requested LoRA adapters are not loaded: {name}\n"
-                            f"Loaded adapters: {self._registry.keys()}."
-                        )
-                    await self._counters[lora_info.lora_id].increment()
-                    result.append(lora_info.lora_id)
-                return result
+                lora_ids = await asyncio.gather(
+                    *[_acquire_single(name) for name in lora_name]
+                )
+                return lora_ids
             else:
                 raise TypeError(
                     "lora_name must be either a string or a list of strings."

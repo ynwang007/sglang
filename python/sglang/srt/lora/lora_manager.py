@@ -170,7 +170,7 @@ class LoRAManager:
         adapter = self.configs.get(lora_id, None)
         assert (
             adapter is not None
-        ), "LoRA adapter with ID {lora_id} is not loaded. This should have been verified before request is sent to the backend."
+        ), f"LoRA adapter with ID {lora_id} is not loaded. This should have been verified before request is sent to the backend."
         assert (
             adapter.name == lora_name
         ), f"mismatch between requested LoRA name {lora_name} and the loaded adapter name {adapter.name}."
@@ -430,6 +430,7 @@ class LoRAManager:
         # Clean up unused LoRA adapters, copying the list to avoid modifying the dict during iteration.
         for uid in list(self.loras):
             if uid not in self.configs:
+                logger.info(f"Unloading LoRA adapter weight from CPU. (uid: {uid})")
                 del self.loras[uid]
 
         # Additional checks for flashinfer backend
