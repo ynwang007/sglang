@@ -139,8 +139,9 @@ class LoRARegistry:
             if isinstance(lora_id, str):
                 await self._counters[lora_id].decrement()
             elif isinstance(lora_id, list):
-                for id in lora_id:
-                    await self._counters[id].decrement()
+                await asyncio.gather(
+                    *[self._counters[id].decrement() for id in lora_id]
+                )
             else:
                 raise TypeError("lora_id must be either a string or a list of strings.")
 
@@ -148,6 +149,9 @@ class LoRARegistry:
         """
         Waits until the usage counter for a LoRA adapter reaches zero, indicating that it is no longer in use.
         This is useful for ensuring that a LoRA adapter can be safely unloaded.
+
+        This method itself is not synchronized, which is safe because it should only be called during LoRA unloading,
+        which itself is guaranteed to be sequential.
         """
         assert (
             lora_id not in self._registry

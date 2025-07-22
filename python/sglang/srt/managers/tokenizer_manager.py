@@ -268,7 +268,8 @@ class TokenizerManager:
             None
         )
 
-        # Lock to linearize LoRA update operations.
+        # Lock to linearize LoRA update operations. Unlike model_update_lock, this lock is used only
+        # during LoRA updates and does not interfere with inferencing.
         self.lora_update_lock = asyncio.Lock()
 
         # For pd disaggregtion
@@ -525,7 +526,12 @@ class TokenizerManager:
         else:
             mm_inputs = None
 
-        await self._validate_one_request(obj, input_ids)
+        if self.server_args.enable_lora and obj.lora_path:
+            # Start tracking ongoing requests for LoRA adapters and replace the user-friendly LoRA names in
+            # `lora_path` with their corresponding unique LoRA IDs, as required for internal processing.
+            obj.lora_path = await self.lora_registry.acquire(obj.lora_path)
+
+        self._validate_one_request(obj, input_ids)
         return self._create_tokenized_object(
             obj, input_text, input_ids, input_embeds, mm_inputs, token_type_ids
         )
@@ -576,9 +582,6 @@ class TokenizerManager:
                     "The server is not configured to enable custom logit processor. "
                     "Please set `--enable-custom-logits-processor` to enable this feature."
                 )
-            if self.server_args.enable_lora and obj.lora_path:
-                # Replace LoRA names in `lora_path` with their corresponding LoRA IDs.
-                obj.lora_path = await self.lora_registry.acquire(obj.lora_path)
 
     def _validate_input_ids_in_vocab(
         self, input_ids: List[int], vocab_size: int

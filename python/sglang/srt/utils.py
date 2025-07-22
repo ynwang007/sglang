@@ -2941,6 +2941,10 @@ class ConcurrentCounter:
         """
         return self._count
 
+    def __repr__(self) -> str:
+        """Return an informative string representation of the counter."""
+        return f"<ConcurrentCounter value={self.value()}>"
+
     async def increment(self, n: int = 1):
         """
         Atomically increment the counter by a given amount and notify all waiters.

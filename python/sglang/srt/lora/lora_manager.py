@@ -346,6 +346,16 @@ class LoRAManager:
             max_lora_rank is not None and target_modules is not None
         ), "When no initial --lora-paths is provided, you need to specify both --max-lora-rank and --lora-target-modules for LoRA initialization."
 
+        self.init_lora_adapters(lora_paths)
+        self.init_lora_shapes(
+            max_lora_rank=max_lora_rank,
+            target_modules=target_modules,
+        )
+        self.init_lora_weight_names()
+        self.init_lora_modules()
+        self.init_memory_pool()
+
+    def init_lora_adapters(self, lora_paths: Optional[Dict[str, LoRAInfo]] = None):
         # Configs of all active LoRA adapters, indexed by LoRA ID.
         self.configs: Dict[str, LoRAConfig] = {}
 
@@ -363,15 +373,6 @@ class LoRAManager:
                     raise RuntimeError(
                         f"Failed to load LoRA adapter {lora_info.lora_name}: {result.error_message}"
                     )
-
-        # Confirm buffer shapes and initialize the LoRA memory pool accordingly.
-        self.init_lora_shapes(
-            max_lora_rank=max_lora_rank,
-            target_modules=target_modules,
-        )
-        self.init_lora_weight_names()
-        self.init_lora_modules()
-        self.init_memory_pool()
 
     def init_lora_shapes(
         self,
