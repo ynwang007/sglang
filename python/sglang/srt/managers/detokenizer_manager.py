@@ -271,13 +271,13 @@ class DetokenizerManager(MultiHttpWorkerDetokenizerMixin):
 
     def _decode_batch_token_id_output(self, recv_obj: BatchTokenIDOutput):
         bs = len(recv_obj.rids)
-        req_trace("detokenize", "start", recv_obj.rids)
 
         # Initialize decode status
         read_ids, surr_ids = [], []
         for i in range(bs):
             rid = recv_obj.rids[i]
             if rid not in self.decode_status:
+                req_trace("detokenize", "first", rid)
                 s = DecodeStatus(
                     decoded_text=recv_obj.decoded_texts[i],
                     decode_ids=list(recv_obj.decode_ids[i]),
@@ -288,6 +288,8 @@ class DetokenizerManager(MultiHttpWorkerDetokenizerMixin):
             else:
                 s = self.decode_status[rid]
                 s.decode_ids.extend(recv_obj.decode_ids[i])
+            if recv_obj.finished_reasons[i] is not None:
+                req_trace("detokenize", "finished", rid)
 
             read_ids.append(
                 self.trim_matched_stop(
@@ -384,7 +386,6 @@ class DetokenizerManager(MultiHttpWorkerDetokenizerMixin):
             s.sent_offset = len(output_str)
             output_strs.append(incremental_output)
 
-        req_trace("detokenize", "end", recv_obj.rids)
         return output_strs
 
     @staticmethod
