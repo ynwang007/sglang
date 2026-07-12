@@ -44,6 +44,7 @@ from sglang.srt.utils import configure_logger, freeze_gc, kill_itself_when_paren
 from sglang.srt.utils.hf_transformers_utils import get_tokenizer
 from sglang.srt.utils.network import get_zmq_socket
 from sglang.srt.utils.patch_tokenizer import decode_without_hf_kwargs
+from sglang.srt.utils.req_trace import req_trace
 from sglang.srt.utils.watchdog import Watchdog
 from sglang.utils import (
     TypeBasedDispatcher,
@@ -270,6 +271,7 @@ class DetokenizerManager(MultiHttpWorkerDetokenizerMixin):
 
     def _decode_batch_token_id_output(self, recv_obj: BatchTokenIDOutput):
         bs = len(recv_obj.rids)
+        req_trace("detokenize", "start", recv_obj.rids)
 
         # Initialize decode status
         read_ids, surr_ids = [], []
@@ -382,6 +384,7 @@ class DetokenizerManager(MultiHttpWorkerDetokenizerMixin):
             s.sent_offset = len(output_str)
             output_strs.append(incremental_output)
 
+        req_trace("detokenize", "end", recv_obj.rids)
         return output_strs
 
     @staticmethod
