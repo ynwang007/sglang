@@ -132,7 +132,7 @@ from sglang.srt.utils.hf_transformers_utils import (
     get_tokenizer_from_processor,
 )
 from sglang.srt.utils.network import get_zmq_socket
-from sglang.srt.utils.req_trace import req_trace
+from sglang.srt.utils.req_trace import req_trace, req_trace_enabled
 from sglang.srt.utils.request_logger import RequestLogger
 from sglang.srt.utils.watchdog import Watchdog
 from sglang.utils import TypeBasedDispatcher, get_exception_traceback
@@ -948,12 +948,13 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             mm_inputs = None
 
         self._validate_one_request(obj, input_ids)
-        req_trace(
-            "tokenize",
-            "end",
-            obj.rid,
-            extra=f"n_input_ids={len(input_ids) if input_ids is not None else 'NA'}",
-        )
+        if req_trace_enabled():
+            req_trace(
+                "tokenize",
+                "end",
+                obj.rid,
+                extra=f"n_input_ids={len(input_ids) if input_ids is not None else 'NA'}",
+            )
         return self._create_tokenized_object(
             obj, input_text, input_ids, input_embeds, mm_inputs, token_type_ids
         )
